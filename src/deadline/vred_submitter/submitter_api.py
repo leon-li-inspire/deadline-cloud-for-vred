@@ -8,6 +8,35 @@ from typing import Any, Optional
 from deadline.client.submitter_api import SubmitterAPI, SubmitterSettings
 
 
+# Template defaults for StartFrame/EndFrame (see default_vred_job_template.yaml);
+# used when settings.frame_list is empty or cannot be parsed.
+_DEFAULT_START_FRAME = 0
+_DEFAULT_END_FRAME = 20
+
+
+def _frame_range_from_settings(settings: SubmitterSettings) -> tuple[int, int]:
+    """Derive integer (start_frame, end_frame) from settings.frame_list.
+
+    The job template declares StartFrame/EndFrame as INT parameters (consumed by
+    an INT task-parameter range expression), so the emitted values must be ints.
+    settings.frame_list is a string such as "1-20" or "5"; falls back to the
+    template defaults when it is empty or unparseable.
+    """
+    frame_list = (settings.frame_list or "").strip()
+    if not frame_list:
+        return _DEFAULT_START_FRAME, _DEFAULT_END_FRAME
+    try:
+        if "-" in frame_list.lstrip("-"):
+            # Split on the range separator, preserving a leading sign on the start frame.
+            sign = "-" if frame_list.startswith("-") else ""
+            start_str, end_str = frame_list.lstrip("-").split("-", 1)
+            return int(sign + start_str), int(end_str)
+        single = int(frame_list)
+        return single, single
+    except ValueError:
+        return _DEFAULT_START_FRAME, _DEFAULT_END_FRAME
+
+
 @dataclass
 class VREDSubmitterSettings(SubmitterSettings):
     """VRED-specific submission settings."""
@@ -32,18 +61,18 @@ class VREDSubmitterAPI(SubmitterAPI):
         settings.project_path = os.path.dirname(scene_file) if scene_file else ""
         settings.input_filenames = [scene_file] if scene_file else []
 
-        render_settings = vrRenderSettings.getRenderSettings()
-        if render_settings:
-            settings.image_width = render_settings.getWidth()
-            settings.image_height = render_settings.getHeight()
+        # vrRenderSettings exposes module-level getters (there is no
+        # getRenderSettings() object in VRED 2025/2026); use them directly.
+        settings.image_width = vrRenderSettings.getRenderPixelWidth()
+        settings.image_height = vrRenderSettings.getRenderPixelHeight()
 
-            output_path = render_settings.getFilename()
-            if output_path:
-                settings.output_path = os.path.dirname(output_path)
-                settings.output_directories = [settings.output_path]
+        output_path = vrRenderSettings.getRenderFilename()
+        if output_path:
+            settings.output_path = os.path.dirname(output_path)
+            settings.output_directories = [settings.output_path]
 
-        start_frame = vrRenderSettings.getStartFrame()
-        end_frame = vrRenderSettings.getEndFrame()
+        start_frame = vrRenderSettings.getRenderStartFrame()
+        end_frame = vrRenderSettings.getRenderStopFrame()
         if end_frame > start_frame:
             settings.frame_list = f"{start_frame}-{end_frame}"
         else:
@@ -83,9 +112,12 @@ class VREDSubmitterAPI(SubmitterAPI):
 
         scene_file = vrFileIO.getFileIOFilePath() or ""
 
+        start_frame, end_frame = _frame_range_from_settings(settings)
+
         parameter_values: list[dict[str, Any]] = [
-            {"name": "VREDSceneFile", "value": scene_file},
-            {"name": "Frames", "value": settings.frame_list},
+            {"name": "SceneFile", "value": scene_file},
+            {"name": "StartFrame", "value": start_frame},
+            {"name": "EndFrame", "value": end_frame},
             {"name": "deadline:priority", "value": settings.priority},
             {"name": "deadline:targetTaskRunStatus", "value": settings.initial_status},
             {"name": "deadline:maxFailedTasksCount", "value": settings.max_failed_tasks_count},
@@ -93,7 +125,6 @@ class VREDSubmitterAPI(SubmitterAPI):
         ]
 
         if isinstance(settings, VREDSubmitterSettings):
-            parameter_values.append({"name": "RenderMode", "value": settings.render_mode})
             parameter_values.append({"name": "ImageWidth", "value": settings.image_width})
             parameter_values.append({"name": "ImageHeight", "value": settings.image_height})
 
