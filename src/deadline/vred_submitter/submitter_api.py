@@ -3,10 +3,16 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
-from deadline.client.submitter_api import SubmitterAPI, SubmitterSettings
+import yaml
 
+import vrFileIO  # type: ignore[import]
+import vrRenderSettings  # type: ignore[import]
+
+from deadline.client.job_bundle.submission import AssetReferences
+from deadline.client.submitter_api import SubmitterAPI, SubmitterSettings
 
 # Template defaults for StartFrame/EndFrame (see default_vred_job_template.yaml);
 # used when settings.frame_list is empty or cannot be parsed.
@@ -51,9 +57,6 @@ class VREDSubmitterAPI(SubmitterAPI):
     """SubmitterAPI implementation for VRED submissions."""
 
     def get_settings(self) -> VREDSubmitterSettings:
-        import vrFileIO  # type: ignore[import]
-        import vrRenderSettings  # type: ignore[import]
-
         settings = VREDSubmitterSettings()
 
         scene_file = vrFileIO.getFileIOFilePath() or ""
@@ -85,9 +88,6 @@ class VREDSubmitterAPI(SubmitterAPI):
         settings: SubmitterSettings,
         host_requirements: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
-        import yaml
-        from pathlib import Path
-
         template_path = Path(__file__).parent / "default_vred_job_template.yaml"
         with open(template_path) as fh:
             job_template = yaml.safe_load(fh)
@@ -108,8 +108,6 @@ class VREDSubmitterAPI(SubmitterAPI):
         settings: SubmitterSettings,
         queue_parameters: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        import vrFileIO  # type: ignore[import]
-
         scene_file = vrFileIO.getFileIOFilePath() or ""
 
         start_frame, end_frame = _frame_range_from_settings(settings)
@@ -142,8 +140,6 @@ class VREDSubmitterAPI(SubmitterAPI):
         return parameter_values
 
     def get_asset_references(self, settings: SubmitterSettings) -> dict[str, Any]:
-        from deadline.client.job_bundle.submission import AssetReferences
-
         asset_refs = AssetReferences(
             input_filenames=set(settings.input_filenames),
             input_directories=set(settings.input_directories),
