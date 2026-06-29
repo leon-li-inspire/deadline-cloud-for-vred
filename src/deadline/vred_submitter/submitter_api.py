@@ -116,6 +116,10 @@ class VREDSubmitterAPI(SubmitterAPI):
 
         parameter_values: list[dict[str, Any]] = [
             {"name": "SceneFile", "value": scene_file},
+            # OutputDir is a required template parameter with no default, so it
+            # must always be emitted, otherwise CreateJob rejects the job:
+            # "No parameter value provided for Job Template parameter OutputDir".
+            {"name": "OutputDir", "value": settings.output_path},
             {"name": "StartFrame", "value": start_frame},
             {"name": "EndFrame", "value": end_frame},
             {"name": "deadline:priority", "value": settings.priority},
@@ -125,8 +129,11 @@ class VREDSubmitterAPI(SubmitterAPI):
         ]
 
         if isinstance(settings, VREDSubmitterSettings):
-            parameter_values.append({"name": "ImageWidth", "value": settings.image_width})
-            parameter_values.append({"name": "ImageHeight", "value": settings.image_height})
+            # ImageWidth/ImageHeight are INT template parameters; vrRenderSettings
+            # returns floats (e.g. 800.0) which fail INT validation (the value
+            # regex "^[-]?(0|[1-9][0-9]*)$" does not match "800.0"). Coerce to int.
+            parameter_values.append({"name": "ImageWidth", "value": int(settings.image_width)})
+            parameter_values.append({"name": "ImageHeight", "value": int(settings.image_height)})
 
         parameter_values.extend(
             {"name": param["name"], "value": param["value"]} for param in queue_parameters
