@@ -22,6 +22,8 @@ AWS Deadline Cloud for VRED is a Python-based package that supports creating and
 
 [service-managed-fleets]: https://docs.aws.amazon.com/deadline-cloud/latest/userguide/smf-manage.html
 
+[submission-hooks]: https://github.com/aws-deadline/deadline-cloud#submission-hooks
+
 [vred-requirements]: https://www.autodesk.com/support/technical/article/caas/sfdcarticles/sfdcarticles/System-requirements-for-Autodesk-VRED-2026-products.html
 
 ## Requirements
@@ -148,6 +150,85 @@ export FLEET_ID=fleet-<fleet-id>
 deadline bundle gui-submit .
 ```
 
+## Pre-GUI Submission Hooks
+
+The VRED Submitter supports **pre-GUI hooks** — studio-provided scripts that run *before* the
+`Submit to AWS Deadline Cloud` dialog opens, so you can pre-populate the job name, description, and
+job parameters (priority, max failed tasks, Conda packages, etc.). This is useful for enforcing
+studio defaults or pulling values from a pipeline/asset-management system before an artist sees the
+dialog.
+
+Pre-GUI hooks are provided by the [AWS Deadline Cloud client library][deadline-cloud-client] and are
+shared across DCC submitters. For VRED, hooks are sourced only from the directory named by the
+`DEADLINE_HOOKS_DIR` environment variable — VRED has no on-disk job bundle at pre-GUI time, so
+bundle-sourced hooks do not apply. They complement the `preSubmission` / `postSubmission` hooks that
+run at submit time (see [Submission Hooks][submission-hooks]).
+
+### Enabling pre-GUI hooks
+
+1. Allow environment-sourced hooks in your Deadline Cloud configuration (off by default):
+   ```
+   deadline config set settings.allow_environment_hooks true
+   ```
+2. Point `DEADLINE_HOOKS_DIR` at a directory that holds your hook script(s) and a `hooks.yaml`:
+   ```cmd
+   setx DEADLINE_HOOKS_DIR "C:\deadline-hooks"
+   ```
+   Log out/in (or restart VRED) so the environment variable takes effect.
+3. Create `hooks.yaml` in that directory with a `preGUI` entry:
+   ```yaml
+   preGUI:
+     - command: C:/Program Files/Python311/python.exe
+       args:
+         - C:/deadline-hooks/pregui_hook.py
+       timeout: 60
+   ```
+   **Tip:** point `command` at a clean system Python, not VRED's bundled interpreter — a bundled
+   interpreter can print a startup banner to stdout that corrupts the hook's JSON output.
+
+### Writing a pre-GUI hook
+
+A pre-GUI hook receives the current submission metadata as JSON on **stdin** and returns the fields
+it wants to override as JSON on **stdout**. Recognized keys are `name`, `description`, and
+`parameters` (a map of parameter name → value; `deadline:`-prefixed keys map to shared job
+properties such as `deadline:priority`, `deadline:maxFailedTasksCount`, `deadline:maxRetriesPerTask`,
+and `CondaPackages` / `CondaChannels` override the Conda queue parameters).
+
+```python
+# pregui_hook.py
+import json, sys
+
+metadata = json.load(sys.stdin)  # jobName, submitterName ("vred"), parameters, farmId, queueId, ...
+
+print(json.dumps({
+    "name": "MyStudio Shot 010",
+    "description": "Submitted via MyStudio pipeline",
+    "parameters": {
+        "deadline:priority": 75,
+        "deadline:maxFailedTasksCount": 5,
+    },
+}))
+```
+
+When the submitter opens, its **Name** / **Description** and **Priority / Maximum failed tasks count
+/ Maximum retries per task** fields on the `Shared job settings` tab (plus any other returned shared
+parameters) are pre-populated from the hook's output.
+
+> **Note:** pre-GUI hooks set the shared job properties above; they do **not** set the VRED render
+> options on the `Job-specific settings` tab (frame range, output path, image size, render quality,
+> etc.). Those are initialized from the VRED scene's render settings and the per-scene sticky
+> settings, and are edited in the submitter UI.
+
+### Confirmation prompt
+
+Before running any hooks, the submitter shows a **Job Submission Confirmation** dialog listing the
+hook scripts that will execute. Click **Yes** to run them, or **No** to cancel — clicking **No**
+aborts opening the submitter cleanly (no error). To skip the prompt on non-interactive or
+studio-locked workstations, enable auto-accept:
+```
+deadline config set settings.auto_accept true
+```
+
 ## Viewing/Submitting a Job Bundle
 
 Before submitting a render job, the Submitter first generates a [Job Bundle][job-bundle], and then relies on the [AWS Deadline Cloud Client][deadline-cloud-client] package to submit that Job Bundle to a specified render farm. If you would like to examine that job bundle, then you can use the `Export Bundle` button in the Submitter to export the Job Bundle to a location of your choice. If you want to submit the exported Job Bundle manually outside VRED, then you can use the Standalone [AWS Deadline Cloud Client][deadline-cloud-client] to submit that same Job Bundle to your specified render farm in a platform-agnostic manner.
@@ -259,6 +340,7 @@ The following environment variables can be used to configure the Submitter amd:
 
 - `CONDA_CHANNELS`: Override default conda channels for job environments (example: `s3://conda-bucket/Conda/linux-64`)
 - `CONDA_PACKAGES`: Override default conda packages (example: `vredcore=2026*`)
+- `DEADLINE_HOOKS_DIR`: Directory containing a `hooks.yaml` (and hook scripts) used for pre-GUI, pre-submission, and post-submission hooks. Environment-sourced hooks also require `deadline config set settings.allow_environment_hooks true`. See [Pre-GUI Submission Hooks](#pre-gui-submission-hooks).
 
 ### Environment Variables for Fleet/Worker Nodes
 
